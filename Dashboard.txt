@@ -1,0 +1,155 @@
+# spacex_dash_app.py
+# Build an Interactive Dashboard with Plotly Dash (IBM SpaceX Lab)
+# Tareas cubiertas:
+# 1) Dropdown de sitios
+# 2) Pie chart dependiente del dropdown
+# 3) RangeSlider de payload
+# 4) Scatter dependiente de dropdown + slider
+
+import pandas as pd
+from dash import Dash, dcc, html, Input, Output
+import plotly.express as px
+
+# ============ Carga de datos ============
+# Asegúrate de tener el CSV en el mismo directorio:
+# wget "https://cf-courses-data.s3.us.cloud-object-storage.appdomain.cloud/IBM-DS0321EN-SkillsNetwork/datasets/spacex_launch_dash.csv"
+spacex_df = pd.read_csv("spacex_launch_dash.csv")
+
+# Valores min/max para slider de payload
+min_payload = int(spacex_df['Payload Mass (kg)'].min())
+max_payload = int(spacex_df['Payload Mass (kg)'].max())
+
+# Lista de sitios (para opciones del dropdown)
+launch_sites = sorted(spacex_df['Launch Site'].unique().tolist())
+
+# ============ App ============
+app = Dash(__name__)
+app.title = "SpaceX Launches • Dash"
+
+# Opciones del dropdown (incluye opción 'ALL')
+dropdown_options = [{'label': 'All Sites', 'value': 'ALL'}] + [
+    {'label': site, 'value': site} for site in launch_sites
+]
+
+app.layout = html.Div(
+    style={'maxWidth': '1100px', 'margin': '0 auto', 'fontFamily': 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif'},
+    children=[
+        html.H1("SpaceX Launch Records Dashboard", style={'textAlign': 'center', 'marginTop': '20px'}),
+
+        # === TASK 1: Dropdown de sitios ===
+        html.Div([
+            html.Label("Launch Site:", style={'fontWeight': 600}),
+            dcc.Dropdown(
+                id='site-dropdown',
+                options=dropdown_options,
+                value='ALL',  # default
+                placeholder="Select a Launch Site here",
+                searchable=True,
+                clearable=False
+            ),
+        ], style={'marginTop': '16px'}),
+
+        html.Hr(),
+
+        # === TASK 2: Pie chart dependiente de dropdown ===
+        html.Div([
+            html.H3("Total Success Launches", style={'marginBottom': '8px'}),
+            dcc.Graph(id='success-pie-chart')
+        ], style={'marginTop': '8px'}),
+
+        html.Hr(),
+
+        # === TASK 3: RangeSlider para payload ===
+        html.Div([
+            html.Label("Payload range (Kg):", style={'fontWeight': 600}),
+            dcc.RangeSlider(
+                id='payload-slider',
+                min=0, max=10000, step=1000,
+                value=[min_payload, max_payload],
+                marks={
+                    0: '0',
+                    2500: '2.5k',
+                    5000: '5k',
+                    7500: '7.5k',
+                    10000: '10k'
+                },
+                tooltip={'placement': 'bottom', 'always_visible': False}
+            )
+        ], style={'marginTop': '8px'}),
+
+        # === TASK 4: Scatter dependiente de dropdown + slider ===
+        html.Div([
+            html.H3("Payload vs. Outcome", style={'marginBottom': '8px'}),
+            dcc.Graph(id='success-payload-scatter-chart')
+        ], style={'marginTop': '8px', 'marginBottom': '40px'}),
+    ]
+)
+
+# === TASK 2: Callback pie chart (por sitio o ALL) ===
+@app.callback(
+    Output('success-pie-chart', 'figure'),
+    Input('site-dropdown', 'value')
+)
+def get_pie_chart(entered_site):
+    if entered_site == 'ALL':
+        # Pie: éxitos por sitio (suma de class==1)
+        df_group = spacex_df.groupby('Launch Site', as_index=False)['class'].sum()
+        fig = px.pie(
+            df_group,
+            values='class',
+            names='Launch Site',
+            title='Total Successful Launches by Site'
+        )
+        return fig
+    else:
+        # Pie: éxitos vs fallos en el sitio seleccionado
+        site_df = spacex_df[spacex_df['Launch Site'] == entered_site]
+        counts = site_df['class'].value_counts().rename_axis('Outcome').reset_index(name='Count')
+        # Renombrar 0/1 a Failed/Success para el pie
+        mapping = {0: 'Failed', 1: 'Success'}
+        counts['Outcome'] = counts['Outcome'].map(mapping)
+        fig = px.pie(
+            counts,
+            values='Count',
+            names='Outcome',
+            title=f'Outcome Counts for {entered_site}'
+        )
+        return fig
+
+# === TASK 4: Callback scatter (filtrado por sitio + rango payload) ===
+@app.callback(
+    Output('success-payload-scatter-chart', 'figure'),
+    [
+        Input('site-dropdown', 'value'),
+        Input('payload-slider', 'value')
+    ]
+)
+def update_scatter(selected_site, payload_range):
+    lo, hi = payload_range
+    # Filtrar por rango de payload
+    df = spacex_df[
+        (spacex_df['Payload Mass (kg)'] >= lo) &
+        (spacex_df['Payload Mass (kg)'] <= hi)
+    ]
+
+    # Filtrar por sitio si corresponde
+    if selected_site != 'ALL':
+        df = df[df['Launch Site'] == selected_site]
+
+    # Scatter: x=Payload, y=class, color=Booster Version Category
+    fig = px.scatter(
+        df,
+        x='Payload Mass (kg)',
+        y='class',
+        color='Booster Version Category',
+        title=('Payload vs. Outcome (All Sites)' if selected_site == 'ALL'
+               else f'Payload vs. Outcome ({selected_site})'),
+        hover_data=['Launch Site', 'Flight Number', 'class']
+    )
+    # y = 0/1 como "bandas" (opcional, queda limpio)
+    fig.update_yaxes(tickmode='array', tickvals=[0, 1], ticktext=['Failed', 'Success'])
+    return fig
+
+# === Run ===
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8050, debug=False)
